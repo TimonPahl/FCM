@@ -19,7 +19,7 @@ domain = mlhp.implicitTriangulation(triangulation, kdtree)
 youngsModulus = 1e11 # youngs modulus in N/m2
 poissonsRatio = 0.3
 
-polynomialDegree = 1
+polynomialDegree = 1 
 nelements = [100]*D # original value was 50
 alphaFCM = 1e-5
 penalty = 1e5 * youngsModulus
@@ -38,6 +38,69 @@ print("  Drück oben bei z >", origin[2] + lengths[2]*0.99)
 
 lengths = [m - o for o, m in zip(origin, max)]
 
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+from vtk import vtkPolyData, vtkPoints, vtkCellArray, vtkLine, vtkXMLPolyDataWriter, vtkVertex
+outputDir="/Applications/Datein_Timon/Bildung/Uni_Rostock/Master_MaschBau/3_Semester/Studienarbeit/Code/FCM-StA/outputsWuerfel1" 
+
+print("7. Probe line generation and export to ParaView", flush=True)
+
+# Mitte von Y und Z
+mid_y = origin[1] + 0.5 * lengths[1]
+mid_z = origin[2] + 0.5 * lengths[2]
+
+# 50 Punkte entlang X zur Visualisierung
+x_vals = np.linspace(origin[0], max[0], 50)
+line_pts = [(x, mid_y, mid_z) for x in x_vals]
+
+# Punkte, die wirklich im Körper liegen (optional: kann später mit domain geprüft werden)
+inside_line_pts = [(i, pt) for i, pt in enumerate(line_pts) if domain(pt) > 0]
+
+# 10 gleichmäßig verteilte Punkte
+if len(inside_line_pts) >= 10:
+    step = len(inside_line_pts) // 9
+    selected_pts = inside_line_pts[::step][:10]
+else:
+    selected_pts = inside_line_pts
+
+# Erzeuge VTK-Punkte
+vtkpoints = vtkPoints()
+for pt in line_pts:
+    vtkpoints.InsertNextPoint(pt)
+
+# Erzeuge VTK-Linie
+lines = vtkCellArray()
+for i in range(len(line_pts) - 1):
+    line = vtkLine()
+    line.GetPointIds().SetId(0, i)
+    line.GetPointIds().SetId(1, i + 1)
+    lines.InsertNextCell(line)
+
+# Erzeuge VTK-Vertices für die ausgewählten Punkte
+vertices = vtkCellArray()
+for idx, pt in selected_pts:
+    vertex = vtkVertex()
+    vertex.GetPointIds().SetId(0, idx)  # ✅ direkter Index
+    vertices.InsertNextCell(vertex)
+
+# Kombiniere alles zu einem PolyData-Objekt
+polydata = vtkPolyData()
+polydata.SetPoints(vtkpoints)
+polydata.SetLines(lines)
+polydata.SetVerts(vertices)
+
+# Exportiere
+writer = vtkXMLPolyDataWriter()
+writer.SetFileName(outputDir + "/cutline_with_points.vtp")
+writer.SetInputData(polydata)
+writer.Write()
+
+print("Exported cutline and 10 points to 'cutline_with_points.vtp'")
+
+
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+#grid = mlhp.makeRefinedGrid(nelements, lengths, origin)# wenn DOF von 1640442 auf 3090903 gehen alles klar
+
 grid = mlhp.makeGrid(nelements, lengths, origin) #grobes gitter
 grid = mlhp.makeRefinedGrid(mlhp.makeFilteredGrid(grid, domain=domain, nseedpoints=polynomialDegree + 2))#filterung mit stl-domain
 
@@ -45,7 +108,7 @@ basis = mlhp.makeHpTensorSpace(grid, polynomialDegree, nfields=D)
 
 print(basis)
 time2=datetime.datetime.now()
-print("Time needed: ", time2-time1)
+print("Time needed: ", time2-time1, "\n")
 
 ##
 time1=time2
@@ -55,7 +118,7 @@ matrix = mlhp.allocateSparseMatrix(basis)
 vector = mlhp.allocateRhsVector(matrix)
 
 time2=datetime.datetime.now()
-print("Time needed: ", time2-time1)
+print("Time needed: ", time2-time1, "\n")
 ##
 time1=time2
 print("3. Computing weak boundary integrals", flush=True)
@@ -80,7 +143,7 @@ mlhp.integrateOnSurface(basis, integrand1, [matrix, vector], quadrature1)
 
 
 time2=datetime.datetime.now()
-print("Time needed: ", time2-time1)
+print("Time needed: ", time2-time1, "\n")
 ##
 time1=time2
 print("4. Computing domain integral", flush=True)
@@ -99,7 +162,7 @@ mlhp.integrateOnDomain(basis, integrand, [matrix, vector],
 quadrature=quadrature)
 
 time2=datetime.datetime.now()
-print("Time needed: ", time2-time1)
+print("Time needed: ", time2-time1, "\n")
 ##
 time1=time2
 print("5. Solving linear system", flush=True)
@@ -115,23 +178,31 @@ dofs, norms = mlhp.cg(matrix, vector, M=P, maxiter=10000, residualNorms=True)
 #plt.show()
 
 time2=datetime.datetime.now()
-print("Time needed: ", time2-time1)
+print("Time needed: ", time2-time1, "\n")
 ##
 time1=time2
 print("6. Postprocessing solution", flush=True)
 
 outputDir="/Applications/Datein_Timon/Bildung/Uni_Rostock/Master_MaschBau/3_Semester/Studienarbeit/Code/FCM-StA/outputsWuerfel1" 
-
 Ku = matrix * dofs
-strainEnergy = 0.0
+# 1. Originalvariante mit Schleife und sqrt
+strainEnergy_old = 0.0
 for ku, u in zip(Ku, dofs):
-    strainEnergy += ku * u
-strainEnergy = np.sqrt(strainEnergy)
-print("Strain energy: %e" % strainEnergy )
+    strainEnergy_old += ku * u
+strainEnergy_old = np.sqrt(strainEnergy_old)
+print("Strain energy (old, sqrt): %e" % strainEnergy_old)
 
+# 2. Neue Variante: Klassisch, korrekt, ohne sqrt
+strainEnergy_dot = 0.5 * np.dot(dofs, Ku)
+print("Strain energy (new, 0.5 * u^T Ku): %e" % strainEnergy_dot)
+
+# 3. Vergleichswert mit np.dot und sqrt (wie alte Variante, aber sauber)
+strainEnergy_sqrt_dot = np.sqrt(np.dot(dofs, Ku))
+print("Strain energy (new, sqrt(u^T Ku)): %e" % strainEnergy_sqrt_dot)
+
+# Alles in CSV schreiben
 with open(outputDir+"/convergence.csv", "a") as myfile:
-    myfile.write("%d %e\n" % (dofs.size, strainEnergy))
-    myfile.close()
+    myfile.write(f"{dofs.size}, {strainEnergy_old:.8e}, {strainEnergy_dot:.8e}, {strainEnergy_sqrt_dot:.8e}\n")
 
 #Output solution on FCM mesh and boundary surface
 gradient = mlhp.projectGradient(basis, dofs, quadrature)
@@ -164,5 +235,5 @@ mlhp.writeMeshOutput(grid, surfmesh0, surfwriter0, [])
 mlhp.writeMeshOutput(grid, surfmesh1, surfwriter1, [])
 
 time2=datetime.datetime.now()
-print("Time needed: ", time2-time1)
+print("Time needed: ", time2-time1, "\n")
 print("Finish time:", time2)
