@@ -185,24 +185,10 @@ print("6. Postprocessing solution", flush=True)
 
 outputDir="/Applications/Datein_Timon/Bildung/Uni_Rostock/Master_MaschBau/3_Semester/Studienarbeit/Code/FCM-StA/outputsWuerfel1" 
 Ku = matrix * dofs
-# 1. Originalvariante mit Schleife und sqrt
-strainEnergy_old = 0.0
-for ku, u in zip(Ku, dofs):
-    strainEnergy_old += ku * u
-strainEnergy_old = np.sqrt(strainEnergy_old)
-print("Strain energy (old, sqrt): %e" % strainEnergy_old)
 
-# 2. Neue Variante: Klassisch, korrekt, ohne sqrt
+#Strain energy: Neue Variante: Klassisch, korrekt, ohne sqrt
 strainEnergy_dot = 0.5 * np.dot(dofs, Ku)
 print("Strain energy (new, 0.5 * u^T Ku): %e" % strainEnergy_dot)
-
-# 3. Vergleichswert mit np.dot und sqrt (wie alte Variante, aber sauber)
-strainEnergy_sqrt_dot = np.sqrt(np.dot(dofs, Ku))
-print("Strain energy (new, sqrt(u^T Ku)): %e" % strainEnergy_sqrt_dot)
-
-# Alles in CSV schreiben
-with open(outputDir+"/convergence.csv", "a") as myfile:
-    myfile.write(f"{dofs.size}, {strainEnergy_old:.8e}, {strainEnergy_dot:.8e}, {strainEnergy_sqrt_dot:.8e}\n")
 
 #Output solution on FCM mesh and boundary surface
 gradient = mlhp.projectGradient(basis, dofs, quadrature)
@@ -234,6 +220,38 @@ surfwriter1 = mlhp.VtuOutput(filename=outputDir+"/linear_elasticity_fcm_stl_boun
 mlhp.writeMeshOutput(grid, surfmesh0, surfwriter0, [])
 mlhp.writeMeshOutput(grid, surfmesh1, surfwriter1, [])
 
-time2=datetime.datetime.now()
-print("Time needed: ", time2-time1, "\n")
-print("Finish time:", time2)
+
+
+########csv
+# Punktweise Auswertung direkt aus bestehender Lösung
+from math import sqrt
+
+# Punktweise Displacement- und Stress-Magnitude auswerten
+results = []
+for idx, pt in selected_pts:
+    # Verschiebung u(x)
+    u_vec = mlhp.evaluateAtPoint(basis, dofs, pt)
+    u_mag = sqrt(sum(u**2 for u in u_vec))
+
+    # Spannung σ(x)
+    grad = mlhp.evaluateGradientAt(basis, dofs, pt)
+    stress = constitutive(kinematics(grad))
+    s_mag = sqrt(sum(stress[i][j]**2 for i in range(3) for j in range(3)))
+
+    results.append((u_mag, s_mag))
+
+# Header generieren (nur einmalig nötig → kannst du z. B. extern regeln)
+csv_path = outputDir + "/convergence.csv"
+if not os.path.exists(csv_path):
+    header = ["DOFs", "StrainEnergy"]
+    for i in range(len(results)):
+        header += [f"U{i}_mag", f"S{i}_mag"]
+    with open(csv_path, "w") as f:
+        f.write(",".join(header) + "\n")
+
+# Datenzeile schreiben
+with open(csv_path, "a") as f:
+    values = [f"{dofs.size}", f"{strainEnergy_dot:.6e}"]
+    for u_mag, s_mag in results:
+        values += [f"{u_mag:.6e}", f"{s_mag:.6e}"]
+    f.write(",".join(values) + "\n")
